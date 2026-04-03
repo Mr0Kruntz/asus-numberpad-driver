@@ -678,8 +678,8 @@ try_sleep = 0.1
 gsettings_failure_count = 0
 gsettings_max_failure_count = 1
 
-qdbus_freedesktop_failure_count = 0
-qdbus_freedesktop_max_failure_count = 1
+qdbus_failure_count = 0
+qdbus_max_failure_count = 1
 
 getting_device_via_xinput_status_failure_count = 0
 getting_device_via_xinput_status_max_failure_count = 1
@@ -936,73 +936,64 @@ def gsettingsGet(path, name):
         log.debug('Gsettings failed more then: \"%s\" so is not try anymore', gsettings_max_failure_count)
 
 
-def qdbusFreedesktopSet(value):
-    global qdbus_freedesktop_failure_count, qdbus_freedesktop_max_failure_count, touchpad
+def qdbusSet(value):
+    global qdbus_failure_count, qdbus_max_failure_count, touchpad
 
-    if qdbus_freedesktop_failure_count < qdbus_freedesktop_max_failure_count:
+    if qdbus_failure_count < qdbus_max_failure_count:
         try:
-            sudo_user = os.environ.get('SUDO_USER')
-
-            base_cmd = [
+            cmd = [
                 QDBUS,
                 'org.kde.KWin',
                 f'/org/kde/KWin/InputDevice/event{touchpad}',
-                'org.freedesktop.DBus.Properties.Set',
-                'org.kde.KWin.InputDevice',
-                'tapToClick',
+                'org.kde.KWin.InputDevice.tapToClick',
                 str(value)
             ]
-
-            if sudo_user is not None:
-                cmd = ['runuser', '-u', sudo_user] + base_cmd
-            else:
-                cmd = base_cmd
-
-            log.debug(cmd)
             ret = subprocess.call(cmd)
-
             if ret != 0:
                 raise subprocess.CalledProcessError(ret, cmd)
-
         except Exception as e:
             log.debug(e, exc_info=True)
-            qdbus_freedesktop_failure_count += 1
+            qdbus_failure_count+=1
     else:
-        log.debug(
-            'Qdbus freedesktop failed more then: "%s" so is not try anymore',
-            qdbus_freedesktop_max_failure_count
-        )
+        log.debug('Qdbus failed more then: \"%s\" so is not try anymore', qdbus_max_failure_count)
 
-def qdbusFreedesktopSetTouchpadTapToClick(value):
-    qdbusFreedesktopSet(value)
 
-def qdbusFreedesktopGetTouchpadEnabled():
-    global touchpad, qdbus_freedesktop_failure_count
+def qdbusGet(service, path, interface, property_name):
+    global qdbus_failure_count, qdbus_max_failure_count
+
+    if qdbus_failure_count < qdbus_max_failure_count:
+        try:
+            cmd = [
+                QDBUS,
+                service,
+                path,
+                'org.freedesktop.DBus.Properties.Get',
+                interface,
+                property_name
+            ]
+            result = subprocess.check_output(cmd).rstrip()
+            return result
+        except Exception as e:
+            log.debug(e, exc_info=True)
+            qdbus_failure_count+=1
+    else:
+        log.debug('Qdbus failed more then: \"%s\" so is not try anymore', qdbus_max_failure_count)
+
+
+def qdbusSetTouchpadTapToClick(value):
+    qdbusSet(value)
+
+def qdbusGetTouchpadEnabled():
+    global touchpad
 
     try:
-        sudo_user = os.environ.get('SUDO_USER')
-
-        base_cmd = [
-            QDBUS,
+        return qdbusGet(
             'org.kde.KWin',
             f'/org/kde/KWin/InputDevice/event{touchpad}',
-            'org.freedesktop.DBus.Properties.Get',
             'org.kde.KWin.InputDevice',
             'enabled'
-        ]
-
-        if sudo_user is not None:
-            cmd = ['runuser', '-u', sudo_user, '--'] + base_cmd
-        else:
-            cmd = base_cmd
-
-        log.debug(cmd)
-        result = subprocess.check_output(cmd).rstrip().decode().rstrip()
-        return result
-
-    except Exception as e:
-        log.debug(e, exc_info=True)
-        qdbus_freedesktop_failure_count += 1
+        ).decode().rstrip()
+    except:
         return None
 
 def gsettingsGetTouchpadSendEvents():
@@ -1295,8 +1286,8 @@ def is_device_enabled(device_name):
     global gsettings_failure_count, gsettings_max_failure_count, getting_device_via_xinput_status_failure_count, getting_device_via_xinput_status_max_failure_count
 
     # before gsettings, because gsettings reports "enabled" on KDE regardless of the truth
-    if qdbus_freedesktop_failure_count < qdbus_freedesktop_max_failure_count:
-        value = qdbusFreedesktopGetTouchpadEnabled()
+    if qdbus_failure_count < qdbus_max_failure_count:
+        value = qdbusGetTouchpadEnabled()
         if value:
             if 'true' in value:
                 return True
@@ -1348,6 +1339,22 @@ def use_bindings_for_touchpad_left_icon_slide_function():
         key_events.append(InputEvent(EV_SYN.SYN_REPORT, 0))
         key_events.append(InputEvent(custom_key, 0))
         key_events.append(InputEvent(EV_SYN.SYN_REPORT, 0))
+    try:
+        import subprocess
+        # 1. Write undeniable proof that the slide function executed
+        with open("/tmp/slide_proof.log", "w") as f:
+            f.write("1. PYTHON REACHED THE SLIDE BLOCK!\n")
+
+            # 2. Run the bash script (WITH THE CORRECT PATH)
+            result = subprocess.run(["bash", "/usr/share/asus-numberpad-driver/scripts/app_launcher.sh"], capture_output=True, text=True)
+
+            # 3. Write any hidden crashes to the log
+            f.write(f"2. SCRIPT OUTPUT: {result.stdout}\n")
+            f.write(f"3. SCRIPT ERRORS: {result.stderr}\n")
+
+    except Exception as e:
+        with open("/tmp/slide_proof.log", "a") as f:
+            f.write(f"!!! PYTHON CRASHED: {e} !!!\n")
 
     try:
         udev.send_events(key_events)
@@ -1475,13 +1482,13 @@ def grab_current_slot():
 
 
 def set_touchpad_prop_tap_to_click(value):
-    global touchpad_name, gsettings_failure_count, gsettings_max_failure_count, qdbus_max_failure_count, qdbus_failure_count, qdbus_freedesktop_failure_count, qdbus_freedesktop_max_failure_count, getting_device_via_xinput_status_failure_count, getting_device_via_xinput_status_max_failure_count, getting_device_via_synclient_status_failure_count, getting_device_via_synclient_status_max_failure_count
+    global touchpad_name, gsettings_failure_count, gsettings_max_failure_count, qdbus_max_failure_count, qdbus_failure_count, getting_device_via_xinput_status_failure_count, getting_device_via_xinput_status_max_failure_count, getting_device_via_synclient_status_failure_count, getting_device_via_synclient_status_max_failure_count
 
     # 1. priority - gsettings (gnome) or qdbus (kde)
     if gsettings_failure_count < gsettings_max_failure_count:
         gsettingsSetTouchpadTapToClick(value)
-    if qdbus_freedesktop_failure_count < qdbus_freedesktop_max_failure_count:
-        qdbusFreedesktopSetTouchpadTapToClick(value)
+    if qdbus_failure_count < qdbus_max_failure_count:
+        qdbusSetTouchpadTapToClick(value)
 
     # 2. priority - xinput
     if getting_device_via_xinput_status_failure_count > getting_device_via_xinput_status_max_failure_count:
@@ -1731,7 +1738,7 @@ def load_all_config_values():
     multitouch = config_get(CONFIG_MULTITOUCH, CONFIG_MULTITOUCH_DEFAULT)
     one_touch_key_rotation = config_get(CONFIG_ONE_TOUCH_KEY_ROTATION, CONFIG_ONE_TOUCH_KEY_ROTATION_DEFAULT)
     activation_time = float(config_get(CONFIG_ACTIVATION_TIME, CONFIG_ACTIVATION_TIME_DEFAULT))
-    sys_numlock_enables_numpad = int(config_get(CONFIG_NUMLOCK_ENABLES_NUMPAD, CONFIG_NUMLOCK_ENABLES_NUMPAD_DEFAULT))
+    sys_numlock_enables_numpad = config_get(CONFIG_NUMLOCK_ENABLES_NUMPAD, CONFIG_NUMLOCK_ENABLES_NUMPAD_DEFAULT)
 
     key_numlock_is_used = False
 
@@ -2117,7 +2124,7 @@ def is_not_finger_moved_to_another_key():
 
 
 def check_system_numlock_vs_local():
-    global brightness, numlock, sys_numlock_enables_numpad
+    global brightness, numlock
 
     #log.debug("check_system_numlock_vs_local: numlock_lock.acquire will be called")
     numlock_lock.acquire()
@@ -2129,21 +2136,7 @@ def check_system_numlock_vs_local():
         numlock = False
         deactivate_numpad()
         log.info("Numpad deactivated")
-
-    # external keyboard device was unplugged
-    elif sys_numlock_enables_numpad == 2:
-
-        log.info("NumPad was not activated because was used sys_numlock_enables_numpad=2 designed for situations when external keyboard was unplugged")
-
-        if sys_numlock:
-            send_numlock_key(1)
-            send_numlock_key(0)
-            log.info("System numlock deactivated")
-
-        sys_numlock_enables_numpad = 1
-        config_set(CONFIG_NUMLOCK_ENABLES_NUMPAD, 1)
-
-    elif sys_numlock and sys_numlock_enables_numpad == 1 and not numlock:
+    elif sys_numlock and sys_numlock_enables_numpad and not numlock:
         numlock = True
         activate_numpad()
         log.info("Numpad activated")
